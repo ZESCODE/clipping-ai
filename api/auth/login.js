@@ -1,4 +1,4 @@
-import { getDatabase } from '../../lib/database.js';
+import { sql, initializeDatabase } from '../../lib/database-vercel.js';
 import { verifyPassword, generateAccessToken, generateRefreshToken, generateUUID, generateSessionExpiry } from '../../lib/auth.js';
 
 export default async function handler(req, res) {
@@ -13,39 +13,39 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    const db = await getDatabase();
+    await initializeDatabase();
 
-    const user = await db.get('SELECT * FROM users WHERE email = ?', [email]);
+    const user = await sql`
+      SELECT * FROM users WHERE email = ${email}
+    `;
 
-    if (!user) {
+    if (user.rows.length === 0) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    const validPassword = await verifyPassword(password, user.password_hash);
+    const validPassword = await verifyPassword(password, user.rows[0].password_hash);
     if (!validPassword) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     // Update last login
-    await db.run(
-      "UPDATE users SET updated_at = datetime('now') WHERE id = ?",
-      [user.id]
-    );
+    await sql`
+      UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE id = ${user.rows[0].id}
+    `;
 
     // Generate tokens
-    const accessToken = generateAccessToken(user.id);
-    const refreshToken = generateRefreshToken(user.id);
+    const accessToken = generateAccessToken(user.rows[0].id);
+    const refreshToken = generateRefreshToken(user.rows[0].id);
 
     // Store session
     const expiresAt = generateSessionExpiry();
-    await db.run(
-      `INSERT INTO sessions (id, user_id, token, expires_at)
-       VALUES (?, ?, ?, ?)`,
-      [generateUUID(), user.id, refreshToken, expiresAt]
-    );
+    await sql`
+      INSERT INTO sessions (id, user_id, token, expires_at)
+      VALUES (${generateUUID()}, ${user.rows[0].id}, ${refreshToken}, ${expiresAt})
+    `;
 
     return res.json({
-      user: { id: user.id, email: user.email, username: user.username },
+      user: { id: user.rows[0].id, email: user.rows[0].email, username: user.rows[0].username },
       accessToken,
       refreshToken
     });

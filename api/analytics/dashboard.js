@@ -1,4 +1,4 @@
-import { getDatabase } from '../../lib/database.js';
+import { sql, initializeDatabase } from '../../lib/database-vercel.js';
 import { verifyToken, extractTokenFromHeader } from '../../lib/auth.js';
 
 export default async function handler(req, res) {
@@ -13,10 +13,10 @@ export default async function handler(req, res) {
     }
 
     const decoded = verifyToken(token);
-    const db = await getDatabase();
+    await initializeDatabase();
 
     // Summary
-    const summary = await db.get(`
+    const summary = await sql`
       SELECT
         COALESCE(SUM(CASE WHEN e.status = 'paid' THEN e.amount ELSE 0 END), 0) as totalEarnings,
         COALESCE(SUM(CASE WHEN e.status = 'paid' THEN e.amount ELSE 0 END), 0) as paidEarnings,
@@ -28,10 +28,10 @@ export default async function handler(req, res) {
         COUNT(DISTINCT e.campaign_id) as campaignsCount,
         COUNT(DISTINCT e.platform) as platformsCount
       FROM earnings e
-      WHERE e.user_id = ?
-    `, [decoded.userId]);
+      WHERE e.user_id = ${decoded.userId}
+    `;
 
-    const byPlatform = await db.all(`
+    const byPlatform = await sql`
       SELECT
         e.platform,
         COALESCE(SUM(CASE WHEN e.status = 'paid' THEN e.amount ELSE 0 END), 0) as totalEarnings,
@@ -40,22 +40,22 @@ export default async function handler(req, res) {
         COALESCE(AVG(e.cpm), 0) as avgCPM,
         COALESCE(SUM(e.views), 0) as totalViews
       FROM earnings e
-      WHERE e.user_id = ?
+      WHERE e.user_id = ${decoded.userId}
       GROUP BY e.platform
-    `, [decoded.userId]);
+    `;
 
-    const dailyEarnings = await db.all(`
+    const dailyEarnings = await sql`
       SELECT
-        date(e.earned_at) as date,
+        DATE(e.earned_at) as date,
         COALESCE(SUM(e.amount), 0) as amount,
         COUNT(*) as transactions
       FROM earnings e
-      WHERE e.user_id = ? AND e.earned_at >= datetime('now', '-30 days')
-      GROUP BY date(e.earned_at)
-      ORDER BY date DESC
-    `, [decoded.userId]);
+      WHERE e.user_id = ${decoded.userId} AND e.earned_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+      GROUP BY DATE(e.earned_at)
+      ORDER BY DATE(e.earned_at) DESC
+    `;
 
-    const topCampaigns = await db.all(`
+    const topCampaigns = await sql`
       SELECT
         c.id,
         c.title,
@@ -64,25 +64,25 @@ export default async function handler(req, res) {
         COALESCE(SUM(e.amount), 0) as totalEarnings,
         COUNT(e.id) as transactionCount
       FROM campaigns c
-      LEFT JOIN earnings e ON c.id = e.campaign_id AND e.user_id = ?
+      LEFT JOIN earnings e ON c.id = e.campaign_id AND e.user_id = ${decoded.userId}
       GROUP BY c.id
       ORDER BY totalEarnings DESC
       LIMIT 5
-    `, [decoded.userId]);
+    `;
 
-    const recentEarnings = await db.all(`
+    const recentEarnings = await sql`
       SELECT
         e.*,
         c.title as campaign_title
       FROM earnings e
       LEFT JOIN campaigns c ON e.campaign_id = c.id
-      WHERE e.user_id = ?
+      WHERE e.user_id = ${decoded.userId}
       ORDER BY e.earned_at DESC
       LIMIT 10
-    `, [decoded.userId]);
+    `;
 
     // Performance metrics
-    const performance = await db.get(`
+    const performance = await sql`
       SELECT
         COUNT(p.id) as total_posts,
         COALESCE(SUM(p.views), 0) as total_views,
@@ -97,17 +97,17 @@ export default async function handler(req, res) {
         COALESCE(AVG(e.cpm), 0) as avg_cpm
       FROM posts p
       LEFT JOIN earnings e ON p.id = e.post_id
-      WHERE p.user_id = ?
-    `, [decoded.userId]);
+      WHERE p.user_id = ${decoded.userId}
+    `;
 
     return res.json({
       dashboard: {
-        summary: { summary, byPlatform, dailyEarnings },
-        byPlatform,
-        dailyEarnings,
-        topCampaigns,
-        recentEarnings,
-        performance: { posts: [], metrics: performance }
+        summary: { summary: summary.rows[0], byPlatform: byPlatform.rows, dailyEarnings: dailyEarnings.rows },
+        byPlatform: byPlatform.rows,
+        dailyEarnings: dailyEarnings.rows,
+        topCampaigns: topCampaigns.rows,
+        recentEarnings: recentEarnings.rows,
+        performance: { posts: [], metrics: performance.rows[0] }
       }
     });
   } catch (error) {

@@ -1,4 +1,4 @@
-import { getDatabase } from '../../lib/database.js';
+import { sql, initializeDatabase } from '../../lib/database-vercel.js';
 import { hashPassword, generateAccessToken, generateRefreshToken, generateUUID, generateSessionExpiry } from '../../lib/auth.js';
 
 export default async function handler(req, res) {
@@ -13,15 +13,14 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Email, password, and username are required' });
     }
 
-    const db = await getDatabase();
+    await initializeDatabase();
 
     // Check if user exists
-    const existingUser = await db.get(
-      'SELECT id FROM users WHERE email = ? OR username = ?',
-      [email, username]
-    );
+    const existingUser = await sql`
+      SELECT id FROM users WHERE email = ${email} OR username = ${username}
+    `;
 
-    if (existingUser) {
+    if (existingUser.rows.length > 0) {
       return res.status(400).json({ error: 'Email or username already exists' });
     }
 
@@ -30,38 +29,34 @@ export default async function handler(req, res) {
 
     // Create user
     const userId = generateUUID();
-    await db.run(
-      `INSERT INTO users (id, email, username, password_hash, created_at)
-       VALUES (?, ?, ?, ?, datetime('now'))`,
-      [userId, email, username, passwordHash]
-    );
+    await sql`
+      INSERT INTO users (id, email, username, password_hash, created_at)
+      VALUES (${userId}, ${email}, ${username}, ${passwordHash}, CURRENT_TIMESTAMP)
+    `;
 
     // Create default settings
-    await db.run(
-      `INSERT INTO user_settings (id, user_id) VALUES (?, ?)`,
-      [generateUUID(), userId]
-    );
+    await sql`
+      INSERT INTO user_settings (id, user_id) VALUES (${generateUUID()}, ${userId})
+    `;
 
     // Get the created user
-    const user = await db.get(
-      'SELECT id, email, username, created_at FROM users WHERE email = ?',
-      [email]
-    );
+    const user = await sql`
+      SELECT id, email, username, created_at FROM users WHERE email = ${email}
+    `;
 
     // Generate tokens
-    const accessToken = generateAccessToken(user.id);
-    const refreshToken = generateRefreshToken(user.id);
+    const accessToken = generateAccessToken(user.rows[0].id);
+    const refreshToken = generateRefreshToken(user.rows[0].id);
 
     // Store session
     const expiresAt = generateSessionExpiry();
-    await db.run(
-      `INSERT INTO sessions (id, user_id, token, expires_at)
-       VALUES (?, ?, ?, ?)`,
-      [generateUUID(), user.id, refreshToken, expiresAt]
-    );
+    await sql`
+      INSERT INTO sessions (id, user_id, token, expires_at)
+      VALUES (${generateUUID()}, ${user.rows[0].id}, ${refreshToken}, ${expiresAt})
+    `;
 
     return res.status(201).json({
-      user: { id: user.id, email: user.email, username: user.username },
+      user: { id: user.rows[0].id, email: user.rows[0].email, username: user.rows[0].username },
       accessToken,
       refreshToken
     });

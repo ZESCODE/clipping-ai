@@ -1,4 +1,4 @@
-import { getDatabase } from '../../lib/database.js';
+import { sql, initializeDatabase } from '../../lib/database-vercel.js';
 import { verifyToken, extractTokenFromHeader } from '../../lib/auth.js';
 
 export default async function handler(req, res) {
@@ -13,18 +13,17 @@ export default async function handler(req, res) {
     }
 
     const decoded = verifyToken(token);
-    const db = await getDatabase();
+    await initializeDatabase();
 
-    const user = await db.get(
-      'SELECT id, email, username, avatar_url, created_at, subscription_tier FROM users WHERE id = ?',
-      [decoded.userId]
-    );
+    const user = await sql`
+      SELECT id, email, username, avatar_url, created_at, subscription_tier FROM users WHERE id = ${decoded.userId}
+    `;
 
-    if (!user) {
+    if (user.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    return res.json({ user });
+    return res.json({ user: user.rows[0] });
   } catch (error) {
     if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
       return res.status(403).json({ error: 'Invalid token' });

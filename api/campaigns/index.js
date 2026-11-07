@@ -1,4 +1,4 @@
-import { getDatabase } from '../../lib/database.js';
+import { sql, initializeDatabase } from '../../lib/database-vercel.js';
 import { verifyToken, extractTokenFromHeader } from '../../lib/auth.js';
 
 export default async function handler(req, res) {
@@ -13,7 +13,7 @@ export default async function handler(req, res) {
     }
 
     const decoded = verifyToken(token);
-    const db = await getDatabase();
+    await initializeDatabase();
 
     const { platform, status, minCPM, maxCPM, sort } = req.query;
 
@@ -24,26 +24,31 @@ export default async function handler(req, res) {
              uc.clips_approved,
              uc.earnings
       FROM campaigns c
-      LEFT JOIN user_campaigns uc ON c.id = uc.campaign_id AND uc.user_id = ?
+      LEFT JOIN user_campaigns uc ON c.id = uc.campaign_id AND uc.user_id = $1
       WHERE 1=1
     `;
     const params = [decoded.userId];
+    let paramIndex = 2;
 
     if (platform) {
-      query += ' AND c.platform = ?';
+      query += ` AND c.platform = $${paramIndex}`;
       params.push(platform);
+      paramIndex++;
     }
     if (status) {
-      query += ' AND c.status = ?';
+      query += ` AND c.status = $${paramIndex}`;
       params.push(status);
+      paramIndex++;
     }
     if (minCPM) {
-      query += ' AND c.cpm >= ?';
+      query += ` AND c.cpm >= $${paramIndex}`;
       params.push(parseFloat(minCPM));
+      paramIndex++;
     }
     if (maxCPM) {
-      query += ' AND c.cpm <= ?';
+      query += ` AND c.cpm <= $${paramIndex}`;
       params.push(parseFloat(maxCPM));
+      paramIndex++;
     }
 
     // Add sorting
@@ -54,9 +59,9 @@ export default async function handler(req, res) {
     const sortOrder = sort === 'cpm' || sort === 'budget' ? 'DESC' : 'ASC';
     query += ` ORDER BY ${sortField} ${sortOrder}`;
 
-    const campaigns = await db.all(query, params);
+    const campaigns = await sql.query(query, params);
 
-    return res.json({ campaigns });
+    return res.json({ campaigns: campaigns.rows });
   } catch (error) {
     if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
       return res.status(403).json({ error: 'Invalid token' });

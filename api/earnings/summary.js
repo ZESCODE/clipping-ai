@@ -1,4 +1,4 @@
-import { getDatabase } from '../../lib/database.js';
+import { sql, initializeDatabase } from '../../lib/database-vercel.js';
 import { verifyToken, extractTokenFromHeader } from '../../lib/auth.js';
 
 export default async function handler(req, res) {
@@ -13,26 +13,27 @@ export default async function handler(req, res) {
     }
 
     const decoded = verifyToken(token);
-    const db = await getDatabase();
+    await initializeDatabase();
 
     const { period, platform } = req.query;
 
     let dateFilter = '';
     const params = [decoded.userId];
+    let paramIndex = 2;
 
     if (period) {
       const days = period === 'week' ? 7 : period === 'month' ? 30 : period === 'year' ? 365 : 30;
-      dateFilter = "AND e.earned_at >= datetime('now', ?)";
-      params.push(`-${days} days`);
+      dateFilter = ` AND e.earned_at >= CURRENT_TIMESTAMP - INTERVAL '${days} days'`;
     }
 
     if (platform) {
-      dateFilter += ' AND e.platform = ?';
+      dateFilter += ` AND e.platform = $${paramIndex}`;
       params.push(platform);
+      paramIndex++;
     }
 
     // Summary
-    const summary = await db.get(`
+    const summaryQuery = `
       SELECT
         COALESCE(SUM(CASE WHEN e.status = 'paid' THEN e.amount ELSE 0 END), 0) as totalEarnings,
         COALESCE(SUM(CASE WHEN e.status = 'paid' THEN e.amount ELSE 0 END), 0) as paidEarnings,
@@ -44,11 +45,12 @@ export default async function handler(req, res) {
         COUNT(DISTINCT e.campaign_id) as campaignsCount,
         COUNT(DISTINCT e.platform) as platformsCount
       FROM earnings e
-      WHERE e.user_id = ? ${dateFilter}
-    `, params);
+      WHERE e.user_id = $1 ${dateFilter}
+    `;
+    const summary = await sql.query(summaryQuery, params);
 
     // By platform
-    const byPlatform = await db.all(`
+    const byPlatformQuery = `
       SELECT
         e.platform,
         COALESCE(SUM(CASE WHEN e.status = 'paid' THEN e.amount ELSE 0 END), 0) as totalEarnings,
@@ -57,27 +59,28 @@ export default async function handler(req, res) {
         COALESCE(AVG(e.cpm), 0) as avgCPM,
         COALESCE(SUM(e.views), 0) as totalViews
       FROM earnings e
-      WHERE e.user_id = ? ${dateFilter}
+      WHERE e.user_id = $1 ${dateFilter}
       GROUP BY e.platform
-    `, params);
+    `;
+    const byPlatform = await sql.query(byPlatformQuery, params);
 
     // Daily earnings (last 30 days)
-    const dailyEarnings = await db.all(`
+    const dailyEarnings = await sql`
       SELECT
-        date(e.earned_at) as date,
+        DATE(e.earned_at) as date,
         COALESCE(SUM(e.amount), 0) as amount,
         COUNT(*) as transactions
       FROM earnings e
-      WHERE e.user_id = ? AND e.earned_at >= datetime('now', '-30 days')
-      GROUP BY date(e.earned_at)
-      ORDER BY date DESC
-    `, [decoded.userId]);
+      WHERE e.user_id = ${decoded.userId} AND e.earned_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+      GROUP BY DATE(e.earned_at)
+      ORDER BY DATE(e.earned_at) DESC
+    `;
 
     return res.json({
       summary: {
-        summary,
-        byPlatform,
-        dailyEarnings
+        summary: summary.rows[0],
+        byPlatform: byPlatform.rows,
+        dailyEarnings: dailyEarnings.rows
       }
     });
   } catch (error) {
