@@ -19,7 +19,6 @@
     "axios": "^1.6.2",
     "axios-retry": "^3.9.1",
     "bcryptjs": "^2.4.3",
-    "canvas": "^2.11.2",
     "cheerio": "^1.0.0-rc.12",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
@@ -46,7 +45,6 @@
   },
   "type": "module",
   "allowScripts": {
-    "canvas": true,
     "esbuild": true,
     "ffmpeg-static@5.3.0": true,
     "puppeteer": true,
