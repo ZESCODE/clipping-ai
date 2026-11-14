@@ -215,8 +215,8 @@ app.get('/api/videos/:id/analysis', authenticateToken, async (req, res) => {
 app.post('/api/videos/:id/generate-clips', authenticateToken, async (req, res) => {
   try {
     const { moments, options } = req.body;
-    const jobId = await videoProcessor.generateClips(req.params.id, req.user.id, moments, options);
-    res.json({ jobId });
+    const result = await videoProcessor.generateClips(req.params.id, req.user.id, moments, options || {});
+    res.json({ jobId: result.jobId });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -503,6 +503,23 @@ app.put('/api/settings', authenticateToken, async (req, res) => {
 // ==================== HEALTH CHECK ====================
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Serve generated clip mp4s (Range-capable for <video> playback/seeking).
+// Auth via Authorization header or ?token= — <video> tags can only send the latter.
+app.get('/clips/:file', (req, res) => {
+  const authHeader = req.headers.authorization || '';
+  const queryToken = req.query.token || '';
+  const provided = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : queryToken;
+  let ok = false;
+  try {
+    ok = Boolean(provided) && auth.verifyToken(provided);
+  } catch { ok = false; }
+  if (!ok) return res.status(401).json({ error: 'Access token required' });
+  const file = String(req.params.file).split('/').pop();
+  const target = join(process.cwd(), 'clips', file);
+  if (!fs.existsSync(target)) return res.status(404).json({ error: "not found" });
+  res.sendFile(target);
 });
 
 // SPA fallback (only if client build exists)

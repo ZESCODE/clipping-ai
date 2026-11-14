@@ -19,6 +19,11 @@ export default defineConfig({
         target: 'http://localhost:3092',
         changeOrigin: true,
       },
+      // generated clip mp4s (Range-capable, ?token= auth)
+      '/clips': {
+        target: 'http://localhost:3092',
+        changeOrigin: true,
+      },
     },
   },
   build: {
